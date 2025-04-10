@@ -1,108 +1,110 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: CloudFormation script for ECS Fargate 
+Description: 'Wild Rydes Infrastructure as Code - ECS Fargate with CI/CD Pipeline (Improved)'
 
 Parameters:
-  ECRRepositoryName:
+  EnvironmentName:
     Type: String
-    Description: Name of the existing ECR repository
-    Default: my-repo
-
+    Default: wildrydes
+    Description: Environment name used for prefixing resources (lowercase recommended)
+    
+  VpcCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for the VPC
+    
+  PublicSubnet1CIDR:
+    Type: String
+    Default: 10.0.1.0/24
+    Description: CIDR block for Public Subnet 1
+    
+  PublicSubnet2CIDR:
+    Type: String
+    Default: 10.0.2.0/24
+    Description: CIDR block for Public Subnet 2
+    
+  ContainerPort:
+    Type: Number
+    Default: 80
+    Description: Port on which the container listens
+    
   GitHubOwner:
     Type: String
-    Description: GitHub username or organization
-    Default: Sushmita-0405
-
+    Description: GitHub repository owner (username or org)
+    
   GitHubRepo:
     Type: String
     Description: GitHub repository name
-    Default: finalexam
-
+    
   GitHubBranch:
     Type: String
-    Description: GitHub branch to pull
     Default: main
-
-  CodeStarConnectionArn:
+    Description: GitHub repository branch
+    
+  GitHubToken:
     Type: String
-    Description: ARN of Connection to GitHub
+    NoEcho: true
+    Description: GitHub OAuth token (for pipeline source). Not recommended in plaintext—use SSM or CodeStar if possible.
 
 Resources:
-  # VPC Setup
+  ######################################################
+  # VPC & Networking
+  ######################################################
   VPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsHostnames: true
+      CidrBlock: !Ref VpcCIDR
       EnableDnsSupport: true
+      EnableDnsHostnames: true
       Tags:
         - Key: Name
-          Value: sushmita-VPC
+          Value: !Sub '${EnvironmentName}-VPC'
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
       Tags:
         - Key: Name
-          Value: sushmita-IGW
+          Value: !Sub '${EnvironmentName}-IGW'
 
-  AttachGateway:
+  InternetGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
-      VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
 
   PublicSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
       AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: sushmita-PublicSubnet1
+          Value: !Sub '${EnvironmentName}-PublicSubnet1'
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
       AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: sushmita-PublicSubnet2
+          Value: !Sub '${EnvironmentName}-PublicSubnet2'
 
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.3.0/24
-      AvailabilityZone: !Select [0, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: sushmita-PrivateSubnet1
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.4.0/24
-      AvailabilityZone: !Select [1, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: sushmita-PrivateSubnet2
-
-  # Public Route Table for Public Subnets
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: sushmita-PublicRouteTable
+          Value: !Sub '${EnvironmentName}-PublicRoutes'
 
-  PublicRoute:
+  DefaultPublicRoute:
     Type: AWS::EC2::Route
-    DependsOn: AttachGateway
+    DependsOn: InternetGatewayAttachment
     Properties:
       RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
@@ -111,139 +113,91 @@ Resources:
   PublicSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref PublicSubnet1
       RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
 
   PublicSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
 
-  # NAT Gateway Setup for Private Subnets
-  NATGatewayEIP:
-    Type: AWS::EC2::EIP
-    Properties:
-      Domain: vpc
-
-  NATGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NATGatewayEIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
-      Tags:
-        - Key: Name
-          Value: sushmita-NATGateway
-
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: sushmita-PrivateRouteTable
-
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NATGateway
-
-  PrivateSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet1
-      RouteTableId: !Ref PrivateRouteTable
-
-  PrivateSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref PrivateRouteTable
-
-  # S3 Bucket for CodePipeline Artifacts
-  CodePipelineArtifactBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub sushmita-codepipeline-artifacts-${AWS::AccountId}-${AWS::Region}
-      VersioningConfiguration:
-        Status: Enabled
-      Tags:
-        - Key: Name
-          Value: sushmita-CodePipelineArtifacts
-
-  # Application Load Balancer
+  ######################################################
+  # Security Groups
+  ######################################################
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: sushmita-ALB Security Group
+      GroupDescription: Security group for the ALB
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
-
-  ApplicationLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-      SecurityGroups:
-        - !Ref ALBSecurityGroup
-      Tags:
-        - Key: Name
-          Value: sushmita-ALB
-
-  ALBTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      VpcId: !Ref VPC
-      Port: 80
-      Protocol: HTTP
-      HealthCheckProtocol: HTTP
-      HealthCheckPath: /
-      TargetType: ip
-
-  ALBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref ApplicationLoadBalancer
-      Port: 80
-      Protocol: HTTP
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref ALBTargetGroup
-
-  # ECS Setup
-  ECSCluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: sushmita-ECSCluster
-
-  ECSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: sushmita-ECS Security Group
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
-      SecurityGroupEgress:
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-ALB-SG'
 
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS containers
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-ECS-SG'
+
+  ######################################################
+  # ECR Repository
+  ######################################################
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${EnvironmentName}-repo'
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
+  ######################################################
+  # ECS Cluster
+  ######################################################
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${EnvironmentName}-cluster'
+
+  ######################################################
+  # ECS Roles
+  ######################################################
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -252,67 +206,152 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 
-  ECSTaskDefinition:
+  ######################################################
+  # CloudWatch Logs
+  ######################################################
+  CloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${EnvironmentName}'
+      RetentionInDays: 7
+
+  ######################################################
+  # ECS Task & Service
+  ######################################################
+  TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: sushmita-task
+      Family: !Sub '${EnvironmentName}-task'
+      Cpu: '256'
+      Memory: '512'
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
-      Cpu: '256'
-      Memory: '512'
       ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
       ContainerDefinitions:
-        - Name: sushmita-app
-          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepositoryName}:latest
-          PortMappings:
-            - ContainerPort: 80
+        - Name: !Sub '${EnvironmentName}-container'
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest'
           Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
 
   ECSService:
     Type: AWS::ECS::Service
-    DependsOn: ALBListener
+    DependsOn: LoadBalancerListener
     Properties:
+      ServiceName: !Sub '${EnvironmentName}-service'
       Cluster: !Ref ECSCluster
-      ServiceName: sushmita-ECSService
-      TaskDefinition: !Ref ECSTaskDefinition
+      TaskDefinition: !Ref TaskDefinition
       DesiredCount: 2
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
           Subnets:
-            - !Ref PrivateSubnet1
-            - !Ref PrivateSubnet2
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
           SecurityGroups:
             - !Ref ECSSecurityGroup
       LoadBalancers:
-        - TargetGroupArn: !Ref ALBTargetGroup
-          ContainerName: sushmita-app
-          ContainerPort: 80
+        - ContainerName: !Sub '${EnvironmentName}-container'
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref TargetGroup
 
-  # Auto Scaling for ECS Service
-  ECSAutoScalingTarget:
+  ######################################################
+  # ALB & Target Group
+  ######################################################
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${EnvironmentName}-alb'
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Scheme: internet-facing
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-ALB'
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${EnvironmentName}-tg'
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VPC
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  ######################################################
+  # Auto Scaling for ECS
+  ######################################################
+  AutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: application-autoscaling.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole
+
+  ServiceScalingTarget:
     Type: AWS::ApplicationAutoScaling::ScalableTarget
     Properties:
-      MaxCapacity: 4
+      MaxCapacity: 10
       MinCapacity: 2
-      ResourceId: !Sub service/${ECSCluster}/${ECSService.Name}
+      ResourceId: !Join ['/', [ service, !Ref ECSCluster, !GetAtt ECSService.Name ]]
       ScalableDimension: ecs:service:DesiredCount
       ServiceNamespace: ecs
+      RoleARN: !GetAtt AutoScalingRole.Arn
 
-  ECSAutoScalingPolicy:
+  ServiceScalingPolicy:
     Type: AWS::ApplicationAutoScaling::ScalingPolicy
     Properties:
-      PolicyName: sushmita-ECSScalingPolicy
+      PolicyName: !Sub '${EnvironmentName}-scaling-policy'
       PolicyType: TargetTrackingScaling
-      ScalingTargetId: !Ref ECSAutoScalingTarget
+      ScalingTargetId: !Ref ServiceScalingTarget
       TargetTrackingScalingPolicyConfiguration:
-        TargetValue: 50.0
         PredefinedMetricSpecification:
           PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 70.0
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
 
-  # CodeBuild Setup
-  CodeBuildRole:
+  ######################################################
+  # CI/CD Pipeline
+  ######################################################
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+  CodeBuildServiceRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -321,9 +360,13 @@ Resources:
           - Effect: Allow
             Principal:
               Service: codebuild.amazonaws.com
-            Action: sts:AssumeRole
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
+      # Minimal inline policy for CloudWatch Logs
       Policies:
-        - PolicyName: CodeBuildPolicy
+        - PolicyName: CodeBuildCloudWatchLogs
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -332,41 +375,9 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                  - ecr:GetAuthorizationToken
-                  - ecr:BatchCheckLayerAvailability
-                  - ecr:CompleteLayerUpload
-                  - ecr:InitiateLayerUpload
-                  - ecr:PutImage
-                  - ecr:UploadLayerPart
-                  - s3:GetObject
-                  - s3:PutObject
                 Resource: '*'
 
-  CodeBuildProject:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Name: sushmita-CodeBuild
-      ServiceRole: !GetAtt CodeBuildRole.Arn
-      Artifacts:
-        Type: CODEPIPELINE
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/standard:5.0
-        PrivilegedMode: true
-        EnvironmentVariables:
-          - Name: AWS_ACCOUNT_ID
-            Value: !Ref AWS::AccountId
-          - Name: AWS_REGION
-            Value: !Ref AWS::Region
-          - Name: ECR_REPO
-            Value: !Ref ECRRepositoryName
-      Source:
-        Type: CODEPIPELINE
-        BuildSpec: buildspec.yml
-
-  # CodePipeline Setup
-  CodePipelineRole:
+  CodePipelineServiceRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -375,96 +386,186 @@ Resources:
           - Effect: Allow
             Principal:
               Service: codepipeline.amazonaws.com
-            Action: sts:AssumeRole
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
       Policies:
-        - PolicyName: CodePipelinePolicy
+        - PolicyName: CodeBuildAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - s3:*
-                  - codebuild:*
-                  - codestar-connections:*
-                  - ecs:*
-                  - iam:PassRole
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: '*'
+        - PolicyName: ECSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                  - ecs:DescribeTaskDefinition
+                  - ecs:DescribeTasks
+                  - ecs:ListTasks
+                  - ecs:RegisterTaskDefinition
+                  - ecs:UpdateService
                 Resource: '*'
 
-  CodePipeline:
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${EnvironmentName}-build'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: ECR_REPOSITORY_URI
+            Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}'
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo "Logging in to Amazon ECR..."
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REPOSITORY_URI
+                - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+                - IMAGE_TAG=${COMMIT_HASH:=latest}
+            build:
+              commands:
+                - echo "Build started on `date`"
+                - echo "Building Docker image..."
+                - docker build -t $ECR_REPOSITORY_URI:latest .
+                - docker tag $ECR_REPOSITORY_URI:latest $ECR_REPOSITORY_URI:$IMAGE_TAG
+            post_build:
+              commands:
+                - echo "Pushing Docker images..."
+                - docker push $ECR_REPOSITORY_URI:latest
+                - docker push $ECR_REPOSITORY_URI:$IMAGE_TAG
+                - echo "Generating imageDefinition.json..."
+                - printf '[{"name":"%s","imageUri":"%s"}]' \
+                    "${EnvironmentName}-container" \
+                    "$ECR_REPOSITORY_URI:$IMAGE_TAG" \
+                  > imageDefinition.json
+          artifacts:
+            files:
+              - imageDefinition.json
+            discard-paths: yes
+
+  Pipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
-      RoleArn: !GetAtt CodePipelineRole.Arn
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
       ArtifactStore:
         Type: S3
-        Location: !Ref CodePipelineArtifactBucket  # Reference the new bucket
+        Location: !Ref ArtifactBucket
+      Name: !Sub '${EnvironmentName}-Pipeline'
       Stages:
         - Name: Source
           Actions:
-            - Name: SourceAction
+            - Name: Source
               ActionTypeId:
                 Category: Source
-                Owner: AWS
-                Provider: CodeStarSourceConnection
-                Version: '1'
-              OutputArtifacts:
-                - Name: SourceArtifact
+                Owner: ThirdParty
+                Version: 1
+                Provider: GitHub
               Configuration:
-                ConnectionArn: !Ref CodeStarConnectionArn
-                FullRepositoryId: !Sub ${GitHubOwner}/${GitHubRepo}
-                BranchName: !Ref GitHubBranch
+                Owner: !Ref GitHubOwner
+                Repo: !Ref GitHubRepo
+                Branch: !Ref GitHubBranch
+                OAuthToken: !Ref GitHubToken
+              OutputArtifacts:
+                - Name: SourceCode
         - Name: Build
           Actions:
-            - Name: BuildAction
+            - Name: BuildAndPushImage
               ActionTypeId:
                 Category: Build
                 Owner: AWS
+                Version: 1
                 Provider: CodeBuild
-                Version: '1'
-              InputArtifacts:
-                - Name: SourceArtifact
-              OutputArtifacts:
-                - Name: BuildArtifact
               Configuration:
                 ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceCode
+              OutputArtifacts:
+                - Name: BuildOutput
         - Name: Deploy
           Actions:
-            - Name: DeployAction
+            - Name: Deploy
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
+                Version: 1
                 Provider: ECS
-                Version: '1'
-              InputArtifacts:
-                - Name: BuildArtifact
               Configuration:
                 ClusterName: !Ref ECSCluster
-                ServiceName: !Ref ECSService
-                FileName: imagedefinitions.json
+                ServiceName: !GetAtt ECSService.Name
+                FileName: 'imageDefinition.json'
+              InputArtifacts:
+                - Name: BuildOutput
 
-  # CloudWatch Alarm for Pipeline Failures
+  ######################################################
+  # CloudWatch Alarm (Pipeline Failure)
+  ######################################################
   PipelineFailureAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: Alarm for CodePipeline failures
+      AlarmDescription: !Sub "Alarm if ${EnvironmentName} pipeline fails"
+      MetricName: ExecutionsFailed
       Namespace: AWS/CodePipeline
-      MetricName: PipelineExecutionFailed
-      Dimensions:
-        - Name: PipelineName
-          Value: !Ref CodePipeline
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
-      AlarmActions: [] # Add SNS topic ARN if needed
+      Dimensions:
+        - Name: PipelineName
+          Value: !Ref Pipeline
+      TreatMissingData: notBreaching
 
 Outputs:
-  ALBEndpoint:
-    Description: URL of the Application Load Balancer
-    Value: !Sub http://${ApplicationLoadBalancer.DNSName}
-  ECSClusterName:
-    Description: Name of the ECS Cluster
+  VPC:
+    Description: "VPC ID"
+    Value: !Ref VPC
+
+  PublicSubnets:
+    Description: "Public subnets"
+    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+
+  ECSClusterOutput:
+    Description: "ECS Cluster"
     Value: !Ref ECSCluster
-  ECSServiceName:
-    Description: Name of the ECS Service
+
+  ECSServiceOutput:
+    Description: "ECS Service"
     Value: !Ref ECSService
+
+  TaskDefinitionOutput:
+    Description: "Task Definition"
+    Value: !Ref TaskDefinition
+
+  LoadBalancerName:
+    Description: "Name of the ALB"
+    Value: !GetAtt ApplicationLoadBalancer.LoadBalancerName
+
+  LoadBalancerDNS:
+    Description: "DNS address of the ALB"
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+
+  ECRRepositoryOutput:
+    Description: "ECR Repository URL"
+    Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}'
+
+  PipelineOutput:
+    Description: "CI/CD Pipeline"
+    Value: !Ref Pipeline
