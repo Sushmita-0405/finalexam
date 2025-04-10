@@ -1,7 +1,5 @@
 
-# Dockerfile
-FROM node:14
-WORKDIR /app
-COPY . .
-RUN npm install
-CMD ["npm", "start"]
+FROM nginx:latest
+COPY . /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
