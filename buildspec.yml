@@ -1,8 +1,21 @@
 version: 0.2
+
 phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
   build:
     commands:
-      - docker build -t wild-rydes .
-      - docker tag wild-rydes:latest $IMAGE_REPO_URL:latest
-      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $IMAGE_REPO_URL
-      - docker push $IMAGE_REPO_URL:latest
+      - echo Building the Docker image...
+      - docker build -t devops-ecr .
+      - docker tag devops-ecr:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-ecr:latest
+  post_build:
+    commands:
+      - echo Pushing the Docker image to ECR...
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-ecr:latest
+      - echo Writing image definitions file...
+      - printf '[{"name":"sushmita-app","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-ecr:latest > imagedefinitions.json
+artifacts:
+  files:
+    - imagedefinitions.json
