@@ -1,21 +1,40 @@
 version: 0.2
 
+env:
+  variables:
+    # ECR Repository URI (matches CFN parameter "ECRRepositoryName")
+    REPOSITORY_URI: !Sub "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+    # Use Git commit SHA as image tag (dynamic versioning)
+    IMAGE_TAG: "$(git rev-parse --short HEAD)"
+
 phases:
+  install:
+    runtime-versions:
+      nodejs: 18  # Replace with your app's runtime (e.g., python, java, etc.)
+    commands:
+      - echo "Installing build dependencies..."
+
   pre_build:
     commands:
-      - echo Logging in to Amazon ECR...
-      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $REPOSITORY_URI
+      - echo "ECR login successful."
+
   build:
     commands:
-      - echo Building the Docker image...
-      - docker build -t devops-ecr .
-      - docker tag devops-ecr:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-ecr:latest
+      - echo "Building Docker image..."
+      - docker build -t $REPOSITORY_URI:$IMAGE_TAG .
+      - docker tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:latest
+
   post_build:
     commands:
-      - echo Pushing the Docker image to ECR...
-      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-ecr:latest
-      - echo Writing image definitions file...
-      - printf '[{"name":"sushmita-app","imageUri":"%s"}]' $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/devops-ecr:latest > imagedefinitions.json
+      - echo "Pushing Docker image to ECR..."
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - docker push $REPOSITORY_URI:latest
+      - echo "Writing ECS image definitions..."
+      - printf '[{"name":"Yourname-app","imageUri":"%s"}]' "$REPOSITORY_URI:$IMAGE_TAG" > imagedefinitions.json
+
 artifacts:
   files:
-    - imagedefinitions.json
+    - imagedefinitions.json  # Required for ECS deployment in CodePipeline
+  discard-paths: yes
